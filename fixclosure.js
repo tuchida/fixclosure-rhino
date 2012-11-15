@@ -209,15 +209,22 @@ function parse(source) {
 
       // Syntax.BinaryExpression
       // Syntax.SequenceExpression
+      // Syntax.MultiplicativeExpression
+      // Syntax.AdditiveExpression
+    case Token.ADD:
     case Token.AND:
     case Token.COMMA:
+    case Token.DIV:
     case Token.GE:
     case Token.GT:
     case Token.IN:
     case Token.INSTANCEOF:
     case Token.LE:
     case Token.LT:
+    case Token.MOD:
+    case Token.MUL:
     case Token.OR:
+    case Token.SUB:
       addPackageName(toRequire, node.getLeft());
       addPackageName(toRequire, node.getRight());
       break;
