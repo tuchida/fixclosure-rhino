@@ -1,6 +1,6 @@
 var Token = org.mozilla.javascript.Token;
 
-function registerIdentifier(node) {
+function registerIdentifier(node, scope) {
   var current = node.getTarget();
   while (current) {
     switch (current.type) {
@@ -12,6 +12,9 @@ function registerIdentifier(node) {
       }
       break;
     case Token.NAME:
+      if (current.getIdentifier() in scope) {
+        return null;
+      }
       return String(node.toSource());
     default:
       return null;
@@ -81,9 +84,9 @@ function isPackageMethod(method) {
     method === 'goog.ui.decorate';
 }
 
-function addPackageName(packages, node) {
+function addPackageName(packages, node, scope) {
   if (node && node.type == Token.GETPROP) {
-    var use = registerIdentifier(node);
+    var use = registerIdentifier(node, scope);
     if (use) {
       var p = getPackageName(use);
       if (p) {
@@ -101,14 +104,33 @@ function addWritedName(packages, node) {
   packages.add(args.get(0).getValue());
 }
 
-function parse(source) {
-  var provided = java.util.TreeSet();
-  var required = java.util.TreeSet();
-  var toProvide = java.util.TreeSet();
-  var toRequire = java.util.TreeSet();
+/**
+ * @constructor
+ */
+function Parsed() {
+  this.provided = java.util.TreeSet();
+  this.required = java.util.TreeSet();
+  this.toProvide = java.util.TreeSet();
+  this.toRequire = java.util.TreeSet();
+}
 
-  var ast = new org.mozilla.javascript.Parser().parse(source, '', 0);
-  ast.visit(function(node) {
+Parsed.prototype.toResult = function() {
+  return {
+    provided: [String(e) for (e in Iterator(this.provided))],
+    required: [String(e) for (e in Iterator(this.required))],
+    toProvide: [String(e) for (e in Iterator(this.toProvide))],
+    toRequire: [String(e) for (e in Iterator(this.toRequire)) if (!this.toProvide.contains(e)) ]
+  };
+};
+
+function pushScope(parent) {
+  var scope = {};
+  scope.__proto__ = parent;
+  return scope;
+}
+
+function buildVisitor(rootNode, scope, parsed) {
+  return function(node) {
     switch (node.type) {
       //  Syntax.AssignmentExpression
     case Token.ASSIGN:
@@ -123,14 +145,14 @@ function parse(source) {
     case Token.ASSIGN_MUL:
     case Token.ASSIGN_DIV:
     case Token.ASSIGN_MOD:
-      addPackageName(toProvide, node.getLeft());
-      addPackageName(toRequire, node.getRight());
+      addPackageName(parsed.toProvide, node.getLeft(), scope);
+      addPackageName(parsed.toRequire, node.getRight(), scope);
       break;
 
       // Syntax.ArrayExpression
     case Token.ARRAYLIT:
       for (var e in Iterator(node.getElements())) {
-        addPackageName(toRequire, e);
+        addPackageName(parsed.toRequire, e, scope);
       }
       break;
 
@@ -138,15 +160,15 @@ function parse(source) {
       // Syntax.NewExpression
     case Token.CALL:
     case Token.NEW:
-      addPackageName(toRequire, node.getTarget());
+      addPackageName(parsed.toRequire, node.getTarget(), scope);
       for (var arg in Iterator(node.getArguments())) {
-        addPackageName(toRequire, arg);
+        addPackageName(parsed.toRequire, arg, scope);
       }
       if (node.getTarget().type == Token.GETPROP) {
         if (node.getTarget().toSource() == 'goog.provide') {
-          addWritedName(provided, node);
+          addWritedName(parsed.provided, node);
         } else if (node.getTarget().toSource() == 'goog.require') {
-          addWritedName(required, node);
+          addWritedName(parsed.required, node);
         }
       }
 
@@ -154,13 +176,13 @@ function parse(source) {
 
       // Syntax.ConditionalExpression
     case Token.HOOK:
-      addPackageName(toRequire, node.getTestExpression());
-      addPackageName(toRequire, node.getTrueExpression());
-      addPackageName(toRequire, node.getFalseExpression());
+      addPackageName(parsed.toRequire, node.getTestExpression(), scope);
+      addPackageName(parsed.toRequire, node.getTrueExpression(), scope);
+      addPackageName(parsed.toRequire, node.getFalseExpression(), scope);
       break;
 
     case Token.EXPR_RESULT:
-      addPackageName(toProvide, node.getExpression());
+      addPackageName(parsed.toProvide, node.getExpression(), scope);
       break;
 
       // Syntax.ExpressionStatement
@@ -170,19 +192,19 @@ function parse(source) {
     case Token.CASE:
     case Token.SWITCH:
     case Token.THROW:
-      addPackageName(toRequire, node.getExpression());
+      addPackageName(parsed.toRequire, node.getExpression(), scope);
       break;
 
       // Syntax.ForInStatement
       // Syntax.ForStatement
     case Token.FOR:
       if (node instanceof org.mozilla.javascript.ast.ForInLoop) {
-        addPackageName(toRequire, node.getIterator());
-        addPackageName(toRequire, node.getIteratedObject());
+        addPackageName(parsed.toRequire, node.getIterator(), scope);
+        addPackageName(parsed.toRequire, node.getIteratedObject(), scope);
       } else {
-        addPackageName(toRequire, node.getInitializer());
-        addPackageName(toRequire, node.getCondition());
-        addPackageName(toRequire, node.getIncrement());
+        addPackageName(parsed.toRequire, node.getInitializer(), scope);
+        addPackageName(parsed.toRequire, node.getCondition(), scope);
+        addPackageName(parsed.toRequire, node.getIncrement(), scope);
       }
       break;
 
@@ -192,19 +214,19 @@ function parse(source) {
     case Token.IF:
     case Token.WHILE:
     case Token.DO:
-      addPackageName(toRequire, node.getCondition());
+      addPackageName(parsed.toRequire, node.getCondition(), scope);
       break;
 
       // Syntax.LogicalExpression
 
       // Syntax.Property
     case Token.COLON:
-      addPackageName(toRequire, node.getRight());
+      addPackageName(parsed.toRequire, node.getRight(), scope);
       break;
 
       // Syntax.ReturnStatement
     case Token.RETURN:
-      addPackageName(toRequire, node.getReturnValue());
+      addPackageName(parsed.toRequire, node.getReturnValue(), scope);
       break;
 
       // Syntax.BinaryExpression
@@ -225,8 +247,8 @@ function parse(source) {
     case Token.MUL:
     case Token.OR:
     case Token.SUB:
-      addPackageName(toRequire, node.getLeft());
-      addPackageName(toRequire, node.getRight());
+      addPackageName(parsed.toRequire, node.getLeft(), scope);
+      addPackageName(parsed.toRequire, node.getRight(), scope);
       break;
 
       // Syntax.UnaryExpression
@@ -240,26 +262,50 @@ function parse(source) {
     case Token.POS:
     case Token.TYPEOF:
     case Token.VOID:
-      addPackageName(toRequire, node.getOperand());
+      addPackageName(parsed.toRequire, node.getOperand(), scope);
       break;
 
       // Syntax.VariableDeclarator
     case Token.CONST:
     case Token.VAR:
       if (node instanceof org.mozilla.javascript.ast.VariableInitializer) {
-        addPackageName(toRequire, node.getInitializer());
+        addPackageName(parsed.toRequire, node.getInitializer(), scope);
+        scope[node.getTarget().getIdentifier()] = 1;
       }
       break;
+
+    case Token.FUNCTION:
+      if (rootNode !== node) {
+        var newScope = pushScope(scope);
+        for (var p in Iterator(node.getParams())) {
+          newScope[p.getIdentifier()] = 1;
+        }
+        node.visit(buildVisitor(node, newScope, parsed));
+        return false;
+      }
+      break;
+
+    case Token.CATCH:
+      if (rootNode !== node) {
+        var newScope = pushScope(scope);
+        newScope[node.getVarName().getIdentifier()] = 1;
+        node.visit(buildVisitor(node, newScope, parsed));
+        return false;
+      }
+      break;
+
     }
     return true;
-  });
-
-  return {
-    provided: [String(e) for (e in Iterator(provided))],
-    required: [String(e) for (e in Iterator(required))],
-    toProvide: [String(e) for (e in Iterator(toProvide))],
-    toRequire: [String(e) for (e in Iterator(toRequire)) if (!toProvide.contains(e)) ]
   };
+}
+
+function parse(source) {
+  var parsed = new Parsed();
+  var scope = {};
+  var root = null;
+  var ast = new org.mozilla.javascript.Parser().parse(source, '', 0);
+  ast.visit(buildVisitor(ast, {}, parsed));
+  return parsed.toResult();
 }
 
 exports.parse = parse;
