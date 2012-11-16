@@ -123,12 +123,6 @@ Parsed.prototype.toResult = function() {
   };
 };
 
-function pushScope(parent) {
-  var scope = {};
-  scope.__proto__ = parent;
-  return scope;
-}
-
 function buildVisitor(rootNode, scope, parsed) {
   return function(node) {
     switch (node.type) {
@@ -276,7 +270,7 @@ function buildVisitor(rootNode, scope, parsed) {
 
     case Token.FUNCTION:
       if (rootNode !== node) {
-        var newScope = pushScope(scope);
+        var newScope = Object.create(scope);
         for (var p in Iterator(node.getParams())) {
           newScope[p.getIdentifier()] = 1;
         }
@@ -287,7 +281,7 @@ function buildVisitor(rootNode, scope, parsed) {
 
     case Token.CATCH:
       if (rootNode !== node) {
-        var newScope = pushScope(scope);
+        var newScope = Object.create(scope);
         newScope[node.getVarName().getIdentifier()] = 1;
         node.visit(buildVisitor(node, newScope, parsed));
         return false;
@@ -301,7 +295,7 @@ function buildVisitor(rootNode, scope, parsed) {
 
 function parse(source) {
   var parsed = new Parsed();
-  var scope = {};
+  var scope = Object.create(null);
   var root = null;
   var ast = new org.mozilla.javascript.Parser().parse(source, '', 0);
   ast.visit(buildVisitor(ast, {}, parsed));
