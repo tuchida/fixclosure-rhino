@@ -296,9 +296,8 @@ function buildVisitor(rootNode, scope, parsed) {
 function parse(source) {
   var parsed = new Parsed();
   var scope = Object.create(null);
-  var root = null;
   var ast = new org.mozilla.javascript.Parser().parse(source, '', 0);
-  ast.visit(buildVisitor(ast, {}, parsed));
+  ast.visit(buildVisitor(ast, scope, parsed));
   return parsed.toResult();
 }
 
